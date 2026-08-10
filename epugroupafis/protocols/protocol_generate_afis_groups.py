@@ -52,7 +52,7 @@ class ProtGenerateAfisGroups(EMProtocol):
         form.addParam('mtfFile', params.FileParam, allowsNull=True,
                       label='MTF STAR file',
                       help='Optional detector MTF file stored in data_optics.')
-        form.addParallelSection(threads=1, mpi=0)
+        form.addParallelSection(threads=8, mpi=0)
 
     def _insertAllSteps(self):
         inputId = self.inputMovies.get().getObjId()
@@ -89,6 +89,7 @@ class ProtGenerateAfisGroups(EMProtocol):
             '--ftype', extension,
             '--movie_dir', moviesDir,
             '--output_fn', self._getExtraPath('movies.star'),
+            '--workers', str(self.numberOfThreads.get()),
             '--quiet'
         ]
         if self.mtfFile.hasValue():
