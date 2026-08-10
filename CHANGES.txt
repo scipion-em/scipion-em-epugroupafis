@@ -1,0 +1,2 @@
+3.0.0 - Initial release
+    Supports calculation based on movies and XML files.
