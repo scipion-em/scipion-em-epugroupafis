@@ -32,12 +32,15 @@ matches each input movie to its ``FoilHole_*_Data_*.xml`` metadata file, and
 creates a flat staging directory inside the protocol working directory using
 symbolic links. The source movies and XML files are not copied or modified.
 
-When some files cannot be paired, Scipion displays a confirmation warning before
-execution with the total number of movies, XML files, matched pairs, unmatched
-movies, and unmatched XML files. If execution continues, only matched pairs are
-processed. The protocol stops only when processing is not possible, for example
-when there are no matched pairs or fewer matched pairs than requested optics
-groups.
+Enable **Are all XML in the same folder?** when the selected directory is
+already flat. In this mode, the protocol passes the original XML and movie
+directories directly to EPU_group_AFIS and does not create staging links. This
+is recommended for large acquisitions where staging would be expensive.
+
+File matching is performed during execution and only matched movie/XML pairs are
+staged for EPU_group_AFIS. After completion, the protocol summary reports the
+number of matched pairs, movies ignored because they have no XML metadata, and
+XML files ignored because they have no matching input movie.
 
 MTF selection and outputs
 -------------------------

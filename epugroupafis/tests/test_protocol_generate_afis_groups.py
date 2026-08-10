@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from emtable import Table
+from pyworkflow.object import Integer
 
 from epugroupafis.protocols import ProtGenerateAfisGroups
 from epugroupafis.wizards import EpugroupafisMtfSelector
@@ -22,6 +23,44 @@ class _Movie:
 
 
 class TestGenerateAfisGroups(unittest.TestCase):
+    def testDirectInputAvoidsStaging(self):
+        with tempfile.TemporaryDirectory() as tmpDir:
+            xmlDir = os.path.join(tmpDir, 'xml')
+            movieDir = os.path.join(tmpDir, 'movies')
+            os.makedirs(xmlDir)
+            os.makedirs(movieDir)
+            movies = []
+            for index in range(2):
+                root = 'FoilHole_%d_Data_10_11_20200101_120000' % index
+                movieFile = os.path.join(movieDir, root + '_Fractions.eer')
+                open(movieFile, 'w').close()
+                open(os.path.join(xmlDir, root + '.xml'), 'w').close()
+                movies.append(_Movie(movieFile, 'movie_%03d' % index))
+
+            infoMessages = []
+            result = ProtGenerateAfisGroups._useDirectInput(
+                xmlDir, movies, info=infoMessages.append)
+
+            self.assertEqual((xmlDir, movieDir, 'eer', 2, 0, 0), result)
+            self.assertTrue(any('without staging' in message
+                                for message in infoMessages))
+            self.assertEqual([], [name for name in os.listdir(tmpDir)
+                                  if name == 'afis_input'])
+
+    def testSummaryReportsIgnoredFiles(self):
+        protocol = ProtGenerateAfisGroups.__new__(ProtGenerateAfisGroups)
+        protocol.outputStar = object()
+        protocol.numberOfGroups = Integer(5)
+        protocol._matchedPairs = Integer(12)
+        protocol._ignoredMovies = Integer(2)
+        protocol._ignoredXml = Integer(3)
+
+        self.assertEqual([
+            'Generated 5 AFIS optics groups from 12 matched movie/XML pairs.',
+            'Ignored 2 movie(s) without XML metadata and 3 XML file(s) '
+            'without a matching input movie.'
+        ], protocol._summary())
+
     def testStageInputFlattensNestedMoviesAndXml(self):
         with tempfile.TemporaryDirectory() as tmpDir:
             movieDir = os.path.join(tmpDir, 'movies', 'GridSquare1')
@@ -45,16 +84,32 @@ class TestGenerateAfisGroups(unittest.TestCase):
             open(unmatchedMovie, 'w').close()
             movies.append(_Movie(unmatchedMovie, 'movie_003'))
 
-            extension = ProtGenerateAfisGroups._stageInputFiles(
-                tmpDir, movies, inputDir)
+            infoMessages = []
+            warningMessages = []
+            extension, matchedCount, ignoredMovies, ignoredXml = (
+                ProtGenerateAfisGroups._stageInputFiles(
+                    tmpDir, movies, inputDir, info=infoMessages.append,
+                    warning=warningMessages.append))
 
             self.assertEqual('mrc', extension)
+            self.assertEqual(2, matchedCount)
+            self.assertEqual(1, ignoredMovies)
+            self.assertEqual(0, ignoredXml)
             self.assertEqual(
                 sorted([root + suffix for root in roots
                         for suffix in ('.xml', '_Fractions.mrc')]),
                 sorted(os.listdir(inputDir)))
             self.assertTrue(all(os.path.islink(os.path.join(inputDir, name))
                                 for name in os.listdir(inputDir)))
+            self.assertTrue(any('Found 2 matched movie/XML pair(s)'
+                                in message for message in infoMessages))
+            self.assertEqual(4, sum('Created symbolic link:' in message
+                                    for message in infoMessages))
+            self.assertIn('AFIS staging completed with 2 pair(s).',
+                          infoMessages)
+            self.assertEqual(1, len(warningMessages))
+            self.assertIn('Ignoring movie without matching XML metadata:',
+                          warningMessages[0])
 
     def testMatchingSkipsMovieWithoutXml(self):
         with tempfile.TemporaryDirectory() as tmpDir:

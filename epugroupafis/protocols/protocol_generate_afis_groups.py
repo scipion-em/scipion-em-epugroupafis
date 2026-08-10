@@ -6,6 +6,7 @@ from fnmatch import fnmatch
 from emtable import Table
 from pwem.objects import EMFile
 from pwem.protocols import EMProtocol
+from pyworkflow.object import Integer
 from pyworkflow.protocol import params
 from pyworkflow.utils import cleanPath, createAbsLink, makePath
 
@@ -33,6 +34,13 @@ class ProtGenerateAfisGroups(EMProtocol):
                       help='Root directory of the EPU session. Subdirectories '
                           'are searched recursively for the XML metadata '
                           'matching each input movie.')
+        form.addParam('xmlFilesInSameFolder', params.BooleanParam,
+                      default=False,
+                      label='Are all XML in the same folder?',
+                      help='Enable this when all EPU XML metadata files are '
+                           'directly inside the selected directory. The '
+                           'protocol will run on the original files without '
+                           'creating a flat staging directory.')
         form.addParam('numberOfGroups', params.IntParam, default=5,
                       validators=[params.GE(5)],
                       label='Number of optics groups',
@@ -54,12 +62,24 @@ class ProtGenerateAfisGroups(EMProtocol):
 
     def runAfisStep(self, inputId):
         movies = self.inputMovies.get()
-        inputDir = self._getTmpPath('afis_input')
-        extension = self._stageInputFiles(self.xmlDir.get(), movies, inputDir)
+        if self.xmlFilesInSameFolder.get():
+            xmlDir, moviesDir, extension, matchedCount, ignoredMovies, ignoredXml = (
+                self._useDirectInput(self.xmlDir.get(), movies,
+                                     info=self.info))
+        else:
+            inputDir = self._getTmpPath('afis_input')
+            extension, matchedCount, ignoredMovies, ignoredXml = (
+                self._stageInputFiles(self.xmlDir.get(), movies, inputDir,
+                                      info=self.info, warning=self.warning))
+            xmlDir = moviesDir = inputDir
+        self._matchedPairs = Integer(matchedCount)
+        self._ignoredMovies = Integer(ignoredMovies)
+        self._ignoredXml = Integer(ignoredXml)
+        self._store()
 
         acquisition = movies.getAcquisition()
         args = [
-            '--xml_dir', inputDir,
+            '--xml_dir', xmlDir,
             '--n_clusters', str(self.numberOfGroups.get()),
             '--algorithm', 'kmeans' if self.algorithm.get() == 0 else 'hac',
             '--apix', str(movies.getSamplingRate()),
@@ -67,7 +87,7 @@ class ProtGenerateAfisGroups(EMProtocol):
             '--cs', str(acquisition.getSphericalAberration()),
             '--q0', str(acquisition.getAmplitudeContrast()),
             '--ftype', extension,
-            '--movie_dir', inputDir,
+            '--movie_dir', moviesDir,
             '--output_fn', self._getExtraPath('movies.star'),
             '--quiet'
         ]
@@ -78,17 +98,67 @@ class ProtGenerateAfisGroups(EMProtocol):
                                               for value in args))
 
     @classmethod
-    def _stageInputFiles(cls, xmlDir, movies, inputDir):
-        pairs, _, _, extension = cls._matchMoviesAndXml(xmlDir, movies)
+    def _useDirectInput(cls, xmlDir, movies, info=None):
+        info = info or (lambda message: None)
+        movieFiles = [os.path.abspath(movie.getFileName())
+                      for movie in movies]
+        extensions = {os.path.splitext(path)[1].lstrip('.')
+                      for path in movieFiles}
+        if len(extensions) != 1:
+            raise ValueError('All input movies must have the same file '
+                             'extension for EPU_group_AFIS.')
+
+        moviesDir = os.path.commonpath(
+            [os.path.dirname(path) for path in movieFiles])
+        xmlFiles = [name for name in os.listdir(xmlDir)
+                    if (fnmatch(name, 'FoilHole_*_Data_*.xml') and
+                        not fnmatch(name, '*ractions.xml'))]
+        movieCount = len(movieFiles)
+        xmlCount = len(xmlFiles)
+        matchedCount = min(movieCount, xmlCount)
+
+        info('Using XML files directly without staging: %s' % xmlDir)
+        info('Using movies directly from common directory: %s' % moviesDir)
+        info('Direct input contains %d movie(s) and %d XML file(s).'
+             % (movieCount, xmlCount))
+        return (xmlDir, moviesDir, extensions.pop(), matchedCount,
+                max(0, movieCount - xmlCount), max(0, xmlCount - movieCount))
+
+    @classmethod
+    def _stageInputFiles(cls, xmlDir, movies, inputDir, info=None,
+                         warning=None):
+        info = info or (lambda message: None)
+        warning = warning or (lambda message: None)
+        info('Searching EPU XML metadata recursively in: %s' % xmlDir)
+        pairs, unmatchedMovies, unmatchedXml, extension = (
+            cls._matchMoviesAndXml(xmlDir, movies))
+        info('Found %d matched movie/XML pair(s), %d unmatched movie(s), '
+             'and %d unmatched XML file(s).'
+             % (len(pairs), len(unmatchedMovies), len(unmatchedXml)))
+
+        for movie in unmatchedMovies:
+            warning('Ignoring movie without matching XML metadata: %s'
+                    % movie.getFileName())
+        for xmlFile in unmatchedXml:
+            warning('Ignoring XML metadata without matching input movie: %s'
+                    % xmlFile)
+
+        info('Creating flat AFIS staging directory: %s' % inputDir)
         cleanPath(inputDir)
         makePath(inputDir)
 
         for movie, xmlFile in pairs:
+            info('Staging pair: %s <-> %s'
+                 % (movie.getFileName(), xmlFile))
             for source in (movie.getFileName(), xmlFile):
-                createAbsLink(os.path.abspath(source),
-                              os.path.join(inputDir,
-                                           os.path.basename(source)))
-        return extension
+                destination = os.path.join(inputDir,
+                                           os.path.basename(source))
+                createAbsLink(os.path.abspath(source), destination)
+                info('Created symbolic link: %s -> %s'
+                     % (destination, os.path.abspath(source)))
+        info('AFIS staging completed with %d pair(s).' % len(pairs))
+        return (extension, len(pairs), len(unmatchedMovies),
+                len(unmatchedXml))
 
     @staticmethod
     def _findXmlFiles(xmlDir):
@@ -196,18 +266,6 @@ class ProtGenerateAfisGroups(EMProtocol):
         errors = []
         if not os.path.isdir(self.xmlDir.get()):
             errors.append('The EPU XML metadata directory does not exist.')
-        elif self.inputMovies.get().getSize() > 0:
-            try:
-                pairs, _, _, _ = self._matchMoviesAndXml(
-                    self.xmlDir.get(), self.inputMovies.get())
-                if not pairs:
-                    errors.append('No input movie has matching EPU XML '
-                                  'metadata.')
-                elif self.numberOfGroups.get() > len(pairs):
-                    errors.append('The number of optics groups cannot exceed '
-                                  'the number of matched movies.')
-            except ValueError as error:
-                errors.append(str(error))
         if self.inputMovies.get().getSize() == 0:
             errors.append('The input movie set is empty.')
         if self.mtfFile.hasValue() and not os.path.isfile(self.mtfFile.get()):
@@ -217,31 +275,13 @@ class ProtGenerateAfisGroups(EMProtocol):
     def _summary(self):
         if not hasattr(self, 'outputStar'):
             return ['Outputs have not been generated yet.']
-        return ['Generated %d AFIS optics groups.' % self.numberOfGroups.get()]
+        return [
+            'Generated %d AFIS optics groups from %d matched movie/XML pairs.'
+            % (self.numberOfGroups.get(), self._matchedPairs.get()),
+            'Ignored %d movie(s) without XML metadata and %d XML file(s) '
+            'without a matching input movie.'
+            % (self._ignoredMovies.get(), self._ignoredXml.get())
+        ]
 
     def _methods(self):
         return []
-
-    def _warnings(self):
-        if (not os.path.isdir(self.xmlDir.get()) or
-                self.inputMovies.get().getSize() == 0):
-            return []
-
-        try:
-            pairs, unmatchedMovies, unmatchedXml, _ = self._matchMoviesAndXml(
-                self.xmlDir.get(), self.inputMovies.get())
-        except ValueError:
-            return []
-
-        if not unmatchedMovies and not unmatchedXml:
-            return []
-
-        movieCount = self.inputMovies.get().getSize()
-        xmlCount = len(self._findXmlFiles(self.xmlDir.get()))
-        return [
-            'Movies and XML files do not fully match. '
-            'Movies: %d. XML: %d. Matched pairs: %d. '
-            '%d movie(s) and %d XML file(s) will be ignored. Continue?'
-            % (movieCount, xmlCount, len(pairs), len(unmatchedMovies),
-               len(unmatchedXml))
-        ]
