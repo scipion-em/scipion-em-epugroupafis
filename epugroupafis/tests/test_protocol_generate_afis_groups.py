@@ -27,6 +27,49 @@ class _Movie:
 
 
 class TestGenerateAfisGroups(unittest.TestCase):
+    def testCreateAssignedMoviesAddsOpticsGroups(self):
+        with tempfile.TemporaryDirectory() as tmpDir:
+            relionStar = os.path.join(tmpDir, 'movies_relion.star')
+            with open(relionStar, 'w') as starFile:
+                starFile.write("""
+data_micrographs
+
+loop_
+_rlnMicrographName #1
+_rlnOpticsGroup #2
+movie_001.mrc 2
+""")
+
+            assignedMovie = _Movie('/movies/movie_001.mrc', 'mic_001.mrc')
+            ignoredMovie = _Movie('/movies/movie_002.mrc', 'mic_002.mrc')
+            inputMovies = [assignedMovie, ignoredMovie]
+            outputMovies = MagicMock()
+
+            def copyItems(items, updateItemCallback, doClone):
+                for movie in items:
+                    updateItemCallback(movie, None)
+
+            outputMovies.copyItems.side_effect = copyItems
+            protocol = ProtGenerateAfisGroups.__new__(
+                ProtGenerateAfisGroups)
+            warnings = []
+            with patch.object(protocol, '_createSetOfMovies',
+                              return_value=outputMovies), \
+                    patch('epugroupafis.protocols.'
+                          'protocol_generate_afis_groups.OpticsGroups.'
+                          'fromStar') as fromStar:
+                result = protocol._createAssignedMovies(
+                    relionStar, inputMovies, warning=warnings.append)
+
+            self.assertIs(outputMovies, result)
+            self.assertTrue(assignedMovie._appendItem)
+            self.assertEqual(2, assignedMovie._rlnOpticsGroup.get())
+            self.assertFalse(ignoredMovie._appendItem)
+            self.assertEqual(1, len(warnings))
+            outputMovies.copyInfo.assert_called_once_with(inputMovies)
+            fromStar.return_value.toImages.assert_called_once_with(
+                outputMovies)
+
     def testRunPassesConfiguredThreadsAsWorkers(self):
         protocol = ProtGenerateAfisGroups.__new__(ProtGenerateAfisGroups)
         movies = MagicMock()

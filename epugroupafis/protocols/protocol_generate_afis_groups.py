@@ -4,11 +4,12 @@ from enum import Enum
 from fnmatch import fnmatch
 
 from emtable import Table
-from pwem.objects import EMFile
+from pwem.objects import EMFile, SetOfMovies
 from pwem.protocols import EMProtocol
 from pyworkflow.object import Integer
 from pyworkflow.protocol import params
 from pyworkflow.utils import cleanPath, createAbsLink, makePath
+from relion.convert.convert31 import OpticsGroups
 
 from epugroupafis import Plugin
 
@@ -16,6 +17,7 @@ from epugroupafis import Plugin
 class AfisOutputs(Enum):
     outputStar = EMFile
     outputRelionStar = EMFile
+    outputMovies = SetOfMovies
 
 
 class ProtGenerateAfisGroups(EMProtocol):
@@ -221,15 +223,52 @@ class ProtGenerateAfisGroups(EMProtocol):
     def createOutputStep(self, inputId):
         inputStar = self._getExtraPath('movies.star')
         relionStar = self._getExtraPath('movies_relion.star')
-        self._createRelionStar(inputStar, relionStar, self.inputMovies.get(),
+        inputMovies = self.inputMovies.get()
+        self._createRelionStar(inputStar, relionStar, inputMovies,
                                warning=self.warning)
+        outputMovies = self._createAssignedMovies(relionStar, inputMovies,
+                                                  warning=self.warning)
 
         outputStar = EMFile(inputStar)
         outputRelionStar = EMFile(relionStar)
         self._defineOutputs(outputStar=outputStar,
-                            outputRelionStar=outputRelionStar)
+                            outputRelionStar=outputRelionStar,
+                            outputMovies=outputMovies)
         self._defineSourceRelation(self.inputMovies, outputStar)
         self._defineSourceRelation(self.inputMovies, outputRelionStar)
+        self._defineTransformRelation(self.inputMovies, outputMovies)
+
+    def _createAssignedMovies(self, relionStar, inputMovies, warning=None):
+        warning = warning or (lambda message: None)
+        assignments = {}
+        for row in Table(fileName=relionStar, tableName='micrographs'):
+            basename = os.path.basename(row.rlnMicrographName)
+            if basename in assignments:
+                raise ValueError('Duplicated movie basename in Relion STAR: '
+                                 '%s' % basename)
+            assignments[basename] = row.rlnOpticsGroup
+        outputMovies = self._createSetOfMovies()
+        outputMovies.copyInfo(inputMovies)
+
+        def updateMovie(movie, row):
+            names = {os.path.basename(name)
+                     for name in (movie.getMicName(), movie.getFileName())
+                     if name}
+            matches = names.intersection(assignments)
+            if len(matches) > 1:
+                raise ValueError('Input movie matches multiple entries in '
+                                 'the Relion STAR: %s' % sorted(matches))
+            movie._appendItem = bool(matches)
+            if matches:
+                movie._rlnOpticsGroup = Integer(assignments[matches.pop()])
+            else:
+                warning('Movie was not assigned to an AFIS optics group: %s'
+                        % movie.getFileName())
+
+        outputMovies.copyItems(inputMovies, updateItemCallback=updateMovie,
+                               doClone=False)
+        OpticsGroups.fromStar(relionStar).toImages(outputMovies)
+        return outputMovies
 
     @staticmethod
     def _createRelionStar(inputStar, outputStar, movies, warning=None):
