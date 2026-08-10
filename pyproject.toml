@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scipion-em-epugroupafis"
+dynamic = ["version", "dependencies"]
+description = "Scipion plugin for generating RELION optics groups from EPU AFIS data"
+authors = [
+    {name = "Scipion Team", email = "scipion@cnb.csic.es"}
+]
+requires-python = ">=3.8"
+readme = "README.rst"
+license = {text = "GNU General Public License v3 (GPLv3)"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["scipion", "cryoem", "EPU", "AFIS", "RELION", "scipion-3.0"]
+
+[project.urls]
+Homepage = "https://github.com/scipion-em/scipion-em-epugroupafis"
+Issues = "https://github.com/scipion-em/scipion-em-epugroupafis/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "epugroupafis.__version__"}
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.package-data]
+epugroupafis = ["protocols.conf"]
+
+[project.entry-points."pyworkflow.plugin"]
+epugroupafis = "epugroupafis"

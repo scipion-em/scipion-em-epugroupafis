@@ -1,0 +1,1 @@
+from .protocol_generate_afis_groups import ProtGenerateAfisGroups
