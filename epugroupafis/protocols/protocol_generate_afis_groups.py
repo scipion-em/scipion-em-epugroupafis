@@ -227,6 +227,7 @@ class ProtGenerateAfisGroups(EMProtocol):
         self._createRelionStar(inputStar, relionStar, inputMovies,
                                warning=self.warning)
         outputMovies = self._createAssignedMovies(inputStar, inputMovies,
+                                                  opticsStar=relionStar,
                                                   warning=self.warning)
 
         outputStar = EMFile(inputStar)
@@ -238,7 +239,8 @@ class ProtGenerateAfisGroups(EMProtocol):
         self._defineSourceRelation(self.inputMovies, outputRelionStar)
         self._defineTransformRelation(self.inputMovies, outputMovies)
 
-    def _createAssignedMovies(self, inputStar, inputMovies, warning=None):
+    def _createAssignedMovies(self, inputStar, inputMovies, opticsStar=None,
+                              warning=None):
         warning = warning or (lambda message: None)
         assignments = {}
         for row in Table(fileName=inputStar, tableName='movies'):
@@ -268,7 +270,7 @@ class ProtGenerateAfisGroups(EMProtocol):
 
         outputMovies.copyItems(inputMovies, updateItemCallback=updateMovie,
                                doClone=False)
-        OpticsGroups.fromStar(inputStar).toImages(outputMovies)
+        OpticsGroups.fromStar(opticsStar or inputStar).toImages(outputMovies)
         return outputMovies
 
     @staticmethod
@@ -296,7 +298,14 @@ class ProtGenerateAfisGroups(EMProtocol):
     @staticmethod
     def _createRelionStar(inputStar, outputStar, movies, warning=None):
         warning = warning or (lambda message: None)
-        opticsTable = Table(fileName=inputStar, tableName='optics')
+        opticsGroups = OpticsGroups.fromStar(inputStar)
+        getGain = getattr(movies, 'getGain', None)
+        gainFile = getGain() if getGain is not None else None
+        if gainFile:
+            if opticsGroups.hasColumn('rlnMicrographGainName'):
+                opticsGroups.updateAll(rlnMicrographGainName=gainFile)
+            else:
+                opticsGroups.addColumns(rlnMicrographGainName=gainFile)
         moviesTable = Table(fileName=inputStar, tableName='movies')
 
         moviesByName = {}
@@ -335,7 +344,7 @@ class ProtGenerateAfisGroups(EMProtocol):
         with open(outputStar, 'w') as outputFile:
             outputFile.write('# Star file generated with Scipion\n')
             outputFile.write('# version 30001\n')
-            opticsTable.writeStar(outputFile, tableName='optics')
+            opticsGroups.toStar(outputFile)
             outputFile.write('# version 30001\n')
             micrographsTable.writeStar(outputFile, tableName='micrographs')
 

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from emtable import Table
 from pyworkflow.object import Integer
+from relion.convert.convert31 import OpticsGroups
 
 from epugroupafis.protocols import ProtGenerateAfisGroups
 from epugroupafis.wizards import EpugroupafisMtfSelector
@@ -26,7 +27,49 @@ class _Movie:
         return getattr(self, name, default)
 
 
+class _Movies(list):
+    def __init__(self, movies, gain=None):
+        super().__init__(movies)
+        self._gain = gain
+
+    def getGain(self):
+        return self._gain
+
+
 class TestGenerateAfisGroups(unittest.TestCase):
+    def testCreateRelionStarAddsImportedGainToOpticsGroups(self):
+        with tempfile.TemporaryDirectory() as tmpDir:
+            inputStar = os.path.join(tmpDir, 'movies.star')
+            outputStar = os.path.join(tmpDir, 'movies_relion.star')
+            with open(inputStar, 'w') as inputFile:
+                inputFile.write("""
+data_optics
+
+loop_
+_rlnOpticsGroupName #1
+_rlnOpticsGroup #2
+opticsGroup1 1
+opticsGroup2 2
+
+data_movies
+
+loop_
+_rlnMicrographMovieName #1
+_rlnOpticsGroup #2
+/epu/FoilHole_1_Fractions.eer 1
+""")
+
+            movies = _Movies([
+                _Movie('/movies/FoilHole_1_Fractions.eer', 'movie_001')
+            ], gain='/calibration/gain.mrc')
+            ProtGenerateAfisGroups._createRelionStar(
+                inputStar, outputStar, movies)
+
+            opticsGroups = OpticsGroups.fromStar(outputStar)
+            self.assertEqual(['/calibration/gain.mrc'] * 2,
+                             [group.rlnMicrographGainName
+                              for group in opticsGroups])
+
     def testCreateAssignedMoviesAddsOpticsGroups(self):
         with tempfile.TemporaryDirectory() as tmpDir:
             inputStar = os.path.join(tmpDir, 'movies.star')
