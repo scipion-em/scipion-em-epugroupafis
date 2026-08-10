@@ -11,15 +11,19 @@ from epugroupafis.wizards import EpugroupafisMtfSelector
 
 
 class _Movie:
-    def __init__(self, fileName, micName):
+    def __init__(self, fileName, micName, originalFileName=None):
         self._fileName = fileName
         self._micName = micName
+        self._originalFileName = originalFileName
 
     def getFileName(self):
         return self._fileName
 
     def getMicName(self):
         return self._micName
+
+    def getAttributeValue(self, name, default=None):
+        return getattr(self, name, default)
 
 
 class TestGenerateAfisGroups(unittest.TestCase):
@@ -243,6 +247,110 @@ _rlnOpticsGroup #2
                              [row.rlnMicrographName for row in rows])
             self.assertEqual([2, 1],
                              [row.rlnOpticsGroup for row in rows])
+
+    def testCreateRelionStarMatchesRenamedMovieByMicrographName(self):
+        with tempfile.TemporaryDirectory() as tmpDir:
+            inputStar = os.path.join(tmpDir, 'movies.star')
+            outputStar = os.path.join(tmpDir, 'movies_relion.star')
+            epuName = ('FoilHole_5133655_Data_5131317_10_20241106_002612_'
+                       'Fractions.eer')
+            with open(inputStar, 'w') as inputFile:
+                inputFile.write("""
+data_optics
+
+loop_
+_rlnOpticsGroupName #1
+_rlnOpticsGroup #2
+opticsGroup1 1
+
+data_movies
+
+loop_
+_rlnMicrographMovieName #1
+_rlnOpticsGroup #2
+/data/%s 1
+""" % epuName)
+
+            movies = [_Movie('/scipion/Movies/movie_000001.eer', epuName)]
+            ProtGenerateAfisGroups._createRelionStar(
+                inputStar, outputStar, movies)
+
+            outputTable = Table(fileName=outputStar,
+                                tableName='micrographs')
+            row = next(iter(outputTable))
+            self.assertEqual(epuName, row.rlnMicrographName)
+            self.assertEqual(1, row.rlnOpticsGroup)
+
+    def testCreateRelionStarMatchesScipionOriginalMovieName(self):
+        with tempfile.TemporaryDirectory() as tmpDir:
+            inputStar = os.path.join(tmpDir, 'movies.star')
+            outputStar = os.path.join(tmpDir, 'movies_relion.star')
+            epuName = 'FoilHole_123_Data_456_7_Fractions.eer'
+            with open(inputStar, 'w') as inputFile:
+                inputFile.write("""
+data_optics
+
+loop_
+_rlnOpticsGroupName #1
+_rlnOpticsGroup #2
+opticsGroup1 1
+
+data_movies
+
+loop_
+_rlnMicrographMovieName #1
+_rlnOpticsGroup #2
+/epu/%s 1
+""" % epuName)
+
+            movie = _Movie('/scipion/movie_000001.mrc',
+                           'micrograph_000001.mrc',
+                           originalFileName='/epu/%s' % epuName)
+            ProtGenerateAfisGroups._createRelionStar(
+                inputStar, outputStar, [movie])
+
+            outputTable = Table(fileName=outputStar,
+                                tableName='micrographs')
+            row = next(iter(outputTable))
+            self.assertEqual('micrograph_000001.mrc',
+                             row.rlnMicrographName)
+
+    def testCreateRelionStarKeepsMoviesOutsideScipionInput(self):
+        with tempfile.TemporaryDirectory() as tmpDir:
+            inputStar = os.path.join(tmpDir, 'movies.star')
+            outputStar = os.path.join(tmpDir, 'movies_relion.star')
+            extraName = ('FoilHole_5133655_Data_5131317_10_20241106_002612_'
+                         'Fractions.eer')
+            with open(inputStar, 'w') as inputFile:
+                inputFile.write("""
+data_optics
+
+loop_
+_rlnOpticsGroupName #1
+_rlnOpticsGroup #2
+opticsGroup1 1
+
+data_movies
+
+loop_
+_rlnMicrographMovieName #1
+_rlnOpticsGroup #2
+/data/FoilHole_input_Fractions.eer 1
+/data/%s 1
+""" % extraName)
+
+            warnings = []
+            movies = [_Movie('/movies/FoilHole_input_Fractions.eer',
+                             'input_movie')]
+            ProtGenerateAfisGroups._createRelionStar(
+                inputStar, outputStar, movies, warning=warnings.append)
+
+            outputTable = Table(fileName=outputStar,
+                                tableName='micrographs')
+            self.assertEqual(['input_movie', '/data/%s' % extraName],
+                             [row.rlnMicrographName for row in outputTable])
+            self.assertEqual(1, len(warnings))
+            self.assertIn(extraName, warnings[0])
 
 
 if __name__ == '__main__':

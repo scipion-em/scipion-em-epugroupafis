@@ -221,7 +221,8 @@ class ProtGenerateAfisGroups(EMProtocol):
     def createOutputStep(self, inputId):
         inputStar = self._getExtraPath('movies.star')
         relionStar = self._getExtraPath('movies_relion.star')
-        self._createRelionStar(inputStar, relionStar, self.inputMovies.get())
+        self._createRelionStar(inputStar, relionStar, self.inputMovies.get(),
+                               warning=self.warning)
 
         outputStar = EMFile(inputStar)
         outputRelionStar = EMFile(relionStar)
@@ -231,17 +232,28 @@ class ProtGenerateAfisGroups(EMProtocol):
         self._defineSourceRelation(self.inputMovies, outputRelionStar)
 
     @staticmethod
-    def _createRelionStar(inputStar, outputStar, movies):
+    def _createRelionStar(inputStar, outputStar, movies, warning=None):
+        warning = warning or (lambda message: None)
         opticsTable = Table(fileName=inputStar, tableName='optics')
         moviesTable = Table(fileName=inputStar, tableName='movies')
 
         moviesByName = {}
         for movie in movies:
-            basename = os.path.basename(movie.getFileName())
-            if basename in moviesByName:
-                raise ValueError('Input movies contain a duplicated filename: %s'
-                                 % basename)
-            moviesByName[basename] = movie
+            fileName = movie.getFileName()
+            aliases = {os.path.basename(fileName),
+                       os.path.basename(os.path.realpath(fileName)),
+                       os.path.basename(movie.getMicName())}
+            getAttributeValue = getattr(movie, 'getAttributeValue', None)
+            if getAttributeValue is not None:
+                originalFileName = getAttributeValue('_originalFileName', None)
+                if originalFileName:
+                    aliases.add(os.path.basename(originalFileName))
+            for alias in aliases:
+                if (alias in moviesByName and
+                        moviesByName[alias] is not movie):
+                    raise ValueError('Input movies contain a duplicated name: '
+                                     '%s' % alias)
+                moviesByName[alias] = movie
 
         micrographsTable = Table(columns=[
             Table.Column('rlnMicrographName', str),
@@ -251,9 +263,13 @@ class ProtGenerateAfisGroups(EMProtocol):
             basename = os.path.basename(row.rlnMicrographMovieName)
             movie = moviesByName.get(basename)
             if movie is None:
-                raise ValueError('Movie from EPU_group_AFIS was not found in '
-                                 'the Scipion input set: %s' % basename)
-            micrographsTable.addRow(rlnMicrographName=movie.getMicName(),
+                micrographName = row.rlnMicrographMovieName
+                warning('Using the EPU_group_AFIS movie path because it '
+                        'could not be matched to the Scipion input set: %s'
+                        % basename)
+            else:
+                micrographName = movie.getMicName()
+            micrographsTable.addRow(rlnMicrographName=micrographName,
                                     rlnOpticsGroup=row.rlnOpticsGroup)
 
         with open(outputStar, 'w') as outputFile:
