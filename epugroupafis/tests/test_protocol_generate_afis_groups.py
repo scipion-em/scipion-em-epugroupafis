@@ -29,18 +29,20 @@ class _Movie:
 class TestGenerateAfisGroups(unittest.TestCase):
     def testCreateAssignedMoviesAddsOpticsGroups(self):
         with tempfile.TemporaryDirectory() as tmpDir:
-            relionStar = os.path.join(tmpDir, 'movies_relion.star')
-            with open(relionStar, 'w') as starFile:
+            inputStar = os.path.join(tmpDir, 'movies.star')
+            with open(inputStar, 'w') as starFile:
                 starFile.write("""
-data_micrographs
+data_movies
 
 loop_
-_rlnMicrographName #1
+_rlnMicrographMovieName #1
 _rlnOpticsGroup #2
-movie_001.mrc 2
+FoilHole_1_Fractions.eer 2
 """)
 
-            assignedMovie = _Movie('/movies/movie_001.mrc', 'mic_001.mrc')
+            assignedMovie = _Movie(
+                '/movies/movie_001.mrc', 'mic_001.mrc',
+                originalFileName='/epu/FoilHole_1_Fractions.eer')
             ignoredMovie = _Movie('/movies/movie_002.mrc', 'mic_002.mrc')
             inputMovies = [assignedMovie, ignoredMovie]
             outputMovies = MagicMock()
@@ -59,7 +61,7 @@ movie_001.mrc 2
                           'protocol_generate_afis_groups.OpticsGroups.'
                           'fromStar') as fromStar:
                 result = protocol._createAssignedMovies(
-                    relionStar, inputMovies, warning=warnings.append)
+                    inputStar, inputMovies, warning=warnings.append)
 
             self.assertIs(outputMovies, result)
             self.assertTrue(assignedMovie._appendItem)
@@ -69,6 +71,40 @@ movie_001.mrc 2
             outputMovies.copyInfo.assert_called_once_with(inputMovies)
             fromStar.return_value.toImages.assert_called_once_with(
                 outputMovies)
+
+    def testCreateAssignedMoviesMatchesEerAndFractionsSuffixes(self):
+        with tempfile.TemporaryDirectory() as tmpDir:
+            inputStar = os.path.join(tmpDir, 'movies.star')
+            with open(inputStar, 'w') as starFile:
+                starFile.write("""
+data_movies
+
+loop_
+_rlnMicrographMovieName #1
+_rlnOpticsGroup #2
+/epu/FoilHole_5141378_Data_5131317_113_20241106_075418_Fractions.eer 3
+""")
+
+            movie = _Movie(
+                'Runs/037604_ProtImportMovies/extra/'
+                'FoilHole_5141378_Data_5131317_113_20241106_075418_EER.eer',
+                'FoilHole_5141378_Data_5131317_113_20241106_075418_EER.eer')
+            outputMovies = MagicMock()
+            outputMovies.copyItems.side_effect = (
+                lambda items, updateItemCallback, doClone:
+                [updateItemCallback(item, None) for item in items])
+            protocol = ProtGenerateAfisGroups.__new__(
+                ProtGenerateAfisGroups)
+
+            with patch.object(protocol, '_createSetOfMovies',
+                              return_value=outputMovies), \
+                    patch('epugroupafis.protocols.'
+                          'protocol_generate_afis_groups.OpticsGroups.'
+                          'fromStar'):
+                protocol._createAssignedMovies(inputStar, [movie])
+
+            self.assertTrue(movie._appendItem)
+            self.assertEqual(3, movie._rlnOpticsGroup.get())
 
     def testRunPassesConfiguredThreadsAsWorkers(self):
         protocol = ProtGenerateAfisGroups.__new__(ProtGenerateAfisGroups)

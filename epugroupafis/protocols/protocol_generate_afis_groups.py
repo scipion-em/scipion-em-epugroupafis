@@ -226,7 +226,7 @@ class ProtGenerateAfisGroups(EMProtocol):
         inputMovies = self.inputMovies.get()
         self._createRelionStar(inputStar, relionStar, inputMovies,
                                warning=self.warning)
-        outputMovies = self._createAssignedMovies(relionStar, inputMovies,
+        outputMovies = self._createAssignedMovies(inputStar, inputMovies,
                                                   warning=self.warning)
 
         outputStar = EMFile(inputStar)
@@ -238,37 +238,60 @@ class ProtGenerateAfisGroups(EMProtocol):
         self._defineSourceRelation(self.inputMovies, outputRelionStar)
         self._defineTransformRelation(self.inputMovies, outputMovies)
 
-    def _createAssignedMovies(self, relionStar, inputMovies, warning=None):
+    def _createAssignedMovies(self, inputStar, inputMovies, warning=None):
         warning = warning or (lambda message: None)
         assignments = {}
-        for row in Table(fileName=relionStar, tableName='micrographs'):
-            basename = os.path.basename(row.rlnMicrographName)
-            if basename in assignments:
-                raise ValueError('Duplicated movie basename in Relion STAR: '
-                                 '%s' % basename)
-            assignments[basename] = row.rlnOpticsGroup
+        for row in Table(fileName=inputStar, tableName='movies'):
+            basename = os.path.basename(row.rlnMicrographMovieName)
+            for alias in self._getNameAliases(basename):
+                if (alias in assignments and
+                        assignments[alias] != row.rlnOpticsGroup):
+                    raise ValueError('Duplicated movie name in AFIS STAR: %s'
+                                     % alias)
+                assignments[alias] = row.rlnOpticsGroup
         outputMovies = self._createSetOfMovies()
         outputMovies.copyInfo(inputMovies)
 
         def updateMovie(movie, row):
-            names = {os.path.basename(name)
-                     for name in (movie.getMicName(), movie.getFileName())
-                     if name}
+            names = self._getMovieAliases(movie)
             matches = names.intersection(assignments)
-            if len(matches) > 1:
+            assignedGroups = {assignments[name] for name in matches}
+            if len(assignedGroups) > 1:
                 raise ValueError('Input movie matches multiple entries in '
-                                 'the Relion STAR: %s' % sorted(matches))
-            movie._appendItem = bool(matches)
-            if matches:
-                movie._rlnOpticsGroup = Integer(assignments[matches.pop()])
+                                 'the AFIS STAR: %s' % sorted(matches))
+            movie._appendItem = bool(assignedGroups)
+            if assignedGroups:
+                movie._rlnOpticsGroup = Integer(assignedGroups.pop())
             else:
                 warning('Movie was not assigned to an AFIS optics group: %s'
                         % movie.getFileName())
 
         outputMovies.copyItems(inputMovies, updateItemCallback=updateMovie,
                                doClone=False)
-        OpticsGroups.fromStar(relionStar).toImages(outputMovies)
+        OpticsGroups.fromStar(inputStar).toImages(outputMovies)
         return outputMovies
+
+    @staticmethod
+    def _getNameAliases(name):
+        basename = os.path.basename(name)
+        stem = os.path.splitext(basename)[0]
+        for suffix in ('_fractions', '_eer'):
+            if stem.lower().endswith(suffix):
+                stem = stem[:-len(suffix)]
+                break
+        return {basename, stem}
+
+    @classmethod
+    def _getMovieAliases(cls, movie):
+        fileName = movie.getFileName()
+        names = {fileName, os.path.realpath(fileName), movie.getMicName()}
+        getAttributeValue = getattr(movie, 'getAttributeValue', None)
+        if getAttributeValue is not None:
+            originalFileName = getAttributeValue('_originalFileName', None)
+            if originalFileName:
+                names.add(originalFileName)
+        return {alias for name in names
+                for alias in cls._getNameAliases(name)}
 
     @staticmethod
     def _createRelionStar(inputStar, outputStar, movies, warning=None):
@@ -278,16 +301,7 @@ class ProtGenerateAfisGroups(EMProtocol):
 
         moviesByName = {}
         for movie in movies:
-            fileName = movie.getFileName()
-            aliases = {os.path.basename(fileName),
-                       os.path.basename(os.path.realpath(fileName)),
-                       os.path.basename(movie.getMicName())}
-            getAttributeValue = getattr(movie, 'getAttributeValue', None)
-            if getAttributeValue is not None:
-                originalFileName = getAttributeValue('_originalFileName', None)
-                if originalFileName:
-                    aliases.add(os.path.basename(originalFileName))
-            for alias in aliases:
+            for alias in ProtGenerateAfisGroups._getMovieAliases(movie):
                 if (alias in moviesByName and
                         moviesByName[alias] is not movie):
                     raise ValueError('Input movies contain a duplicated name: '
@@ -300,7 +314,14 @@ class ProtGenerateAfisGroups(EMProtocol):
         ])
         for row in moviesTable:
             basename = os.path.basename(row.rlnMicrographMovieName)
-            movie = moviesByName.get(basename)
+            matchingMovies = {moviesByName[alias]
+                              for alias in ProtGenerateAfisGroups.
+                              _getNameAliases(basename)
+                              if alias in moviesByName}
+            if len(matchingMovies) > 1:
+                raise ValueError('AFIS movie matches multiple Scipion input '
+                                 'movies: %s' % basename)
+            movie = matchingMovies.pop() if matchingMovies else None
             if movie is None:
                 micrographName = row.rlnMicrographMovieName
                 warning('Using the EPU_group_AFIS movie path because it '
