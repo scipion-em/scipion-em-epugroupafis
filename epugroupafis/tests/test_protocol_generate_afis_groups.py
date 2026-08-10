@@ -1,10 +1,12 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from emtable import Table
 
 from epugroupafis.protocols import ProtGenerateAfisGroups
+from epugroupafis.wizards import EpugroupafisMtfSelector
 
 
 class _Movie:
@@ -20,6 +22,30 @@ class _Movie:
 
 
 class TestGenerateAfisGroups(unittest.TestCase):
+    def testMtfWizardTargetsProtocolAndSetsSelectedPath(self):
+        class Form:
+            def setVar(self, name, value):
+                self.name = name
+                self.value = value
+
+        class FileInfo:
+            @staticmethod
+            def getPath():
+                return '/tmp/mtf.star'
+
+        form = Form()
+        self.assertEqual([(ProtGenerateAfisGroups, ['mtfFile'])],
+                         EpugroupafisMtfSelector._targets)
+
+        with patch('epugroupafis.wizards.FileBrowserWindow') as browserClass:
+            EpugroupafisMtfSelector().show(form)
+            onSelect = browserClass.call_args.kwargs['onSelect']
+            onSelect(FileInfo())
+            browserClass.return_value.show.assert_called_once_with()
+
+        self.assertEqual('mtfFile', form.name)
+        self.assertEqual('/tmp/mtf.star', form.value)
+
     def testCreateRelionStarUsesScipionMicrographNames(self):
         with tempfile.TemporaryDirectory() as tmpDir:
             inputStar = os.path.join(tmpDir, 'movies.star')
