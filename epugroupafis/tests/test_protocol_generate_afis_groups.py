@@ -40,6 +40,10 @@ class TestGenerateAfisGroups(unittest.TestCase):
                 open(movieFile, 'w').close()
                 open(xmlFile, 'w').close()
                 movies.append(_Movie(movieFile, 'movie_%03d' % index))
+            unmatchedMovie = os.path.join(
+                movieDir, 'FoilHole_3_Data_30_31_20200101_120200_Fractions.mrc')
+            open(unmatchedMovie, 'w').close()
+            movies.append(_Movie(unmatchedMovie, 'movie_003'))
 
             extension = ProtGenerateAfisGroups._stageInputFiles(
                 tmpDir, movies, inputDir)
@@ -52,7 +56,7 @@ class TestGenerateAfisGroups(unittest.TestCase):
             self.assertTrue(all(os.path.islink(os.path.join(inputDir, name))
                                 for name in os.listdir(inputDir)))
 
-    def testMatchingRequiresOneXmlPerMovie(self):
+    def testMatchingSkipsMovieWithoutXml(self):
         with tempfile.TemporaryDirectory() as tmpDir:
             movie = _Movie(
                 os.path.join(tmpDir,
@@ -61,9 +65,30 @@ class TestGenerateAfisGroups(unittest.TestCase):
             unrelatedXml = os.path.join(
                 tmpDir, 'FoilHole_2_Data_20_21_20200101_120100.xml')
             open(unrelatedXml, 'w').close()
-            with self.assertRaisesRegex(ValueError,
-                                        'No EPU XML metadata file matches'):
-                ProtGenerateAfisGroups._matchMoviesAndXml(tmpDir, [movie])
+            pairs, unmatchedMovies, unmatchedXml, extension = (
+                ProtGenerateAfisGroups._matchMoviesAndXml(tmpDir, [movie]))
+
+            self.assertEqual([], pairs)
+            self.assertEqual([movie], unmatchedMovies)
+            self.assertEqual([unrelatedXml], unmatchedXml)
+            self.assertEqual('mrc', extension)
+
+    def testFindsXmlWithoutMovie(self):
+        with tempfile.TemporaryDirectory() as tmpDir:
+            matchedRoot = 'FoilHole_1_Data_10_11_20200101_120000'
+            unmatchedRoot = 'FoilHole_2_Data_20_21_20200101_120100'
+            matchedXml = os.path.join(tmpDir, matchedRoot + '.xml')
+            unmatchedXml = os.path.join(tmpDir, unmatchedRoot + '.xml')
+            open(matchedXml, 'w').close()
+            open(unmatchedXml, 'w').close()
+            movie = _Movie(os.path.join(
+                tmpDir, matchedRoot + '_Fractions.eer'), 'movie_001')
+
+            pairs, unmatchedMovies, unmatchedXmlFiles, _ = (
+                ProtGenerateAfisGroups._matchMoviesAndXml(tmpDir, [movie]))
+
+            self.assertEqual([], unmatchedMovies)
+            self.assertEqual([unmatchedXml], unmatchedXmlFiles)
 
     def testMtfWizardTargetsProtocolAndSetsSelectedPath(self):
         class Form:

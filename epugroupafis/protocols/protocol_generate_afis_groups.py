@@ -79,7 +79,7 @@ class ProtGenerateAfisGroups(EMProtocol):
 
     @classmethod
     def _stageInputFiles(cls, xmlDir, movies, inputDir):
-        pairs, extension = cls._matchMoviesAndXml(xmlDir, movies)
+        pairs, _, _, extension = cls._matchMoviesAndXml(xmlDir, movies)
         cleanPath(inputDir)
         makePath(inputDir)
 
@@ -91,15 +91,17 @@ class ProtGenerateAfisGroups(EMProtocol):
         return extension
 
     @staticmethod
-    def _matchMoviesAndXml(xmlDir, movies):
-        xmlFiles = sorted(
+    def _findXmlFiles(xmlDir):
+        return sorted(
             os.path.join(root, name)
             for root, _, names in os.walk(xmlDir)
             for name in names
             if (fnmatch(name, 'FoilHole_*_Data_*.xml') and
                 not fnmatch(name, '*ractions.xml')))
-        if not xmlFiles:
-            raise ValueError('No EPU FoilHole XML metadata files were found.')
+
+    @classmethod
+    def _matchMoviesAndXml(cls, xmlDir, movies):
+        xmlFiles = cls._findXmlFiles(xmlDir)
 
         moviesByName = {}
         extensions = set()
@@ -117,6 +119,7 @@ class ProtGenerateAfisGroups(EMProtocol):
         extension = extensions.pop()
 
         pairs = []
+        unmatchedMovies = []
         usedXmlFiles = set()
         for basename, movie in moviesByName.items():
             matchingXml = []
@@ -127,8 +130,8 @@ class ProtGenerateAfisGroups(EMProtocol):
                     matchingXml.append(xmlFile)
 
             if not matchingXml:
-                raise ValueError('No EPU XML metadata file matches input '
-                                 'movie: %s' % basename)
+                unmatchedMovies.append(movie)
+                continue
             if len(matchingXml) > 1:
                 raise ValueError('More than one EPU XML metadata file matches '
                                  'input movie: %s' % basename)
@@ -140,7 +143,9 @@ class ProtGenerateAfisGroups(EMProtocol):
             usedXmlFiles.add(xmlFile)
             pairs.append((movie, xmlFile))
 
-        return pairs, extension
+        unmatchedXmlFiles = [xmlFile for xmlFile in xmlFiles
+                             if xmlFile not in usedXmlFiles]
+        return pairs, unmatchedMovies, unmatchedXmlFiles, extension
 
     def createOutputStep(self, inputId):
         inputStar = self._getExtraPath('movies.star')
@@ -193,9 +198,12 @@ class ProtGenerateAfisGroups(EMProtocol):
             errors.append('The EPU XML metadata directory does not exist.')
         elif self.inputMovies.get().getSize() > 0:
             try:
-                pairs, _ = self._matchMoviesAndXml(
+                pairs, _, _, _ = self._matchMoviesAndXml(
                     self.xmlDir.get(), self.inputMovies.get())
-                if self.numberOfGroups.get() > len(pairs):
+                if not pairs:
+                    errors.append('No input movie has matching EPU XML '
+                                  'metadata.')
+                elif self.numberOfGroups.get() > len(pairs):
                     errors.append('The number of optics groups cannot exceed '
                                   'the number of matched movies.')
             except ValueError as error:
@@ -213,3 +221,27 @@ class ProtGenerateAfisGroups(EMProtocol):
 
     def _methods(self):
         return []
+
+    def _warnings(self):
+        if (not os.path.isdir(self.xmlDir.get()) or
+                self.inputMovies.get().getSize() == 0):
+            return []
+
+        try:
+            pairs, unmatchedMovies, unmatchedXml, _ = self._matchMoviesAndXml(
+                self.xmlDir.get(), self.inputMovies.get())
+        except ValueError:
+            return []
+
+        if not unmatchedMovies and not unmatchedXml:
+            return []
+
+        movieCount = self.inputMovies.get().getSize()
+        xmlCount = len(self._findXmlFiles(self.xmlDir.get()))
+        return [
+            'Movies and XML files do not fully match. '
+            'Movies: %d. XML: %d. Matched pairs: %d. '
+            '%d movie(s) and %d XML file(s) will be ignored. Continue?'
+            % (movieCount, xmlCount, len(pairs), len(unmatchedMovies),
+               len(unmatchedXml))
+        ]
