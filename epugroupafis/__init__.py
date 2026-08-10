@@ -35,13 +35,12 @@ class Plugin(pwem.Plugin):
         installedFlag = '%s_installed' % EPUGROUPAFIS_ENV_NAME
         command = cls.getCondaActivationCmd()
         command += (' conda create -y -n %s -c conda-forge python=3.10 '
-                    'numpy scikit-learn matplotlib && ' % EPUGROUPAFIS_ENV_NAME)
+                'pip && ' % EPUGROUPAFIS_ENV_NAME)
         command += 'conda activate %s && ' % EPUGROUPAFIS_ENV_NAME
         command += ('git clone --depth 1 --branch %s '
                 % EPUGROUPAFIS_BRANCH)
         command += '--single-branch %s . && ' % EPUGROUPAFIS_REPOSITORY
-        command += ('install -m 755 EPU_Group_AFIS.py '
-                    '"$CONDA_PREFIX/bin/%s" && ' % EPUGROUPAFIS_PROGRAM)
+        command += 'python -m pip install . && '
         command += 'touch %s' % installedFlag
 
         envPath = os.environ.get('PATH', '')
