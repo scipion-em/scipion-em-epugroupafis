@@ -1,12 +1,13 @@
 import os
 import shlex
 from enum import Enum
+from fnmatch import fnmatch
 
 from emtable import Table
 from pwem.objects import EMFile
 from pwem.protocols import EMProtocol
 from pyworkflow.protocol import params
-from pyworkflow.utils import createAbsLink, makePath
+from pyworkflow.utils import cleanPath, createAbsLink, makePath
 
 from epugroupafis import Plugin
 
@@ -29,7 +30,9 @@ class ProtGenerateAfisGroups(EMProtocol):
                       label='Input movies')
         form.addParam('xmlDir', params.PathParam, important=True,
                       label='EPU XML metadata directory',
-                      help='Directory containing FoilHole_*_Data_*.xml files.')
+                      help='Root directory of the EPU session. Subdirectories '
+                          'are searched recursively for the XML metadata '
+                          'matching each input movie.')
         form.addParam('numberOfGroups', params.IntParam, default=5,
                       validators=[params.GE(5)],
                       label='Number of optics groups',
@@ -51,18 +54,12 @@ class ProtGenerateAfisGroups(EMProtocol):
 
     def runAfisStep(self, inputId):
         movies = self.inputMovies.get()
-        moviesDir = self._getTmpPath('movies')
-        makePath(moviesDir)
-        for movie in movies:
-            createAbsLink(movie.getFileName(),
-                          os.path.join(moviesDir,
-                                       os.path.basename(movie.getFileName())))
+        inputDir = self._getTmpPath('afis_input')
+        extension = self._stageInputFiles(self.xmlDir.get(), movies, inputDir)
 
-        firstMovie = movies.getFirstItem()
-        extension = os.path.splitext(firstMovie.getFileName())[1].lstrip('.')
         acquisition = movies.getAcquisition()
         args = [
-            '--xml_dir', self.xmlDir.get(),
+            '--xml_dir', inputDir,
             '--n_clusters', str(self.numberOfGroups.get()),
             '--algorithm', 'kmeans' if self.algorithm.get() == 0 else 'hac',
             '--apix', str(movies.getSamplingRate()),
@@ -70,7 +67,7 @@ class ProtGenerateAfisGroups(EMProtocol):
             '--cs', str(acquisition.getSphericalAberration()),
             '--q0', str(acquisition.getAmplitudeContrast()),
             '--ftype', extension,
-            '--movie_dir', moviesDir,
+            '--movie_dir', inputDir,
             '--output_fn', self._getExtraPath('movies.star'),
             '--quiet'
         ]
@@ -79,6 +76,71 @@ class ProtGenerateAfisGroups(EMProtocol):
 
         Plugin.runEpugroupafis(self, ' '.join(shlex.quote(value)
                                               for value in args))
+
+    @classmethod
+    def _stageInputFiles(cls, xmlDir, movies, inputDir):
+        pairs, extension = cls._matchMoviesAndXml(xmlDir, movies)
+        cleanPath(inputDir)
+        makePath(inputDir)
+
+        for movie, xmlFile in pairs:
+            for source in (movie.getFileName(), xmlFile):
+                createAbsLink(os.path.abspath(source),
+                              os.path.join(inputDir,
+                                           os.path.basename(source)))
+        return extension
+
+    @staticmethod
+    def _matchMoviesAndXml(xmlDir, movies):
+        xmlFiles = sorted(
+            os.path.join(root, name)
+            for root, _, names in os.walk(xmlDir)
+            for name in names
+            if (fnmatch(name, 'FoilHole_*_Data_*.xml') and
+                not fnmatch(name, '*ractions.xml')))
+        if not xmlFiles:
+            raise ValueError('No EPU FoilHole XML metadata files were found.')
+
+        moviesByName = {}
+        extensions = set()
+        for movie in movies:
+            basename = os.path.basename(movie.getFileName())
+            if basename in moviesByName:
+                raise ValueError('Input movies contain a duplicated filename: '
+                                 '%s' % basename)
+            moviesByName[basename] = movie
+            extensions.add(os.path.splitext(basename)[1].lstrip('.'))
+
+        if len(extensions) != 1:
+            raise ValueError('All input movies must have the same file '
+                             'extension for EPU_group_AFIS.')
+        extension = extensions.pop()
+
+        pairs = []
+        usedXmlFiles = set()
+        for basename, movie in moviesByName.items():
+            matchingXml = []
+            for xmlFile in xmlFiles:
+                xmlRoot = os.path.splitext(os.path.basename(xmlFile))[0]
+                if fnmatch(basename, '*%s*ractions.%s' %
+                           (xmlRoot, extension)):
+                    matchingXml.append(xmlFile)
+
+            if not matchingXml:
+                raise ValueError('No EPU XML metadata file matches input '
+                                 'movie: %s' % basename)
+            if len(matchingXml) > 1:
+                raise ValueError('More than one EPU XML metadata file matches '
+                                 'input movie: %s' % basename)
+
+            xmlFile = matchingXml[0]
+            if xmlFile in usedXmlFiles:
+                raise ValueError('The same EPU XML metadata file matches more '
+                                 'than one input movie: %s' % xmlFile)
+            usedXmlFiles.add(xmlFile)
+            pairs.append((movie, xmlFile))
+
+        return pairs, extension
 
     def createOutputStep(self, inputId):
         inputStar = self._getExtraPath('movies.star')
@@ -129,12 +191,15 @@ class ProtGenerateAfisGroups(EMProtocol):
         errors = []
         if not os.path.isdir(self.xmlDir.get()):
             errors.append('The EPU XML metadata directory does not exist.')
-        elif not any(name.startswith('FoilHole_') and
-                     name.endswith('.xml') and
-                     not name.endswith('Fractions.xml')
-                     for _, _, names in os.walk(self.xmlDir.get())
-                     for name in names):
-            errors.append('No EPU FoilHole XML metadata files were found.')
+        elif self.inputMovies.get().getSize() > 0:
+            try:
+                pairs, _ = self._matchMoviesAndXml(
+                    self.xmlDir.get(), self.inputMovies.get())
+                if self.numberOfGroups.get() > len(pairs):
+                    errors.append('The number of optics groups cannot exceed '
+                                  'the number of matched movies.')
+            except ValueError as error:
+                errors.append(str(error))
         if self.inputMovies.get().getSize() == 0:
             errors.append('The input movie set is empty.')
         if self.mtfFile.hasValue() and not os.path.isfile(self.mtfFile.get()):

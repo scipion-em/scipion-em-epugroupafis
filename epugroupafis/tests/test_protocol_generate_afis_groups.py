@@ -22,6 +22,49 @@ class _Movie:
 
 
 class TestGenerateAfisGroups(unittest.TestCase):
+    def testStageInputFlattensNestedMoviesAndXml(self):
+        with tempfile.TemporaryDirectory() as tmpDir:
+            movieDir = os.path.join(tmpDir, 'movies', 'GridSquare1')
+            xmlDir = os.path.join(tmpDir, 'Images-Disc1', 'GridSquare1',
+                                  'Data')
+            inputDir = os.path.join(tmpDir, 'protocol', 'tmp', 'afis_input')
+            os.makedirs(movieDir)
+            os.makedirs(xmlDir)
+
+            roots = ['FoilHole_1_Data_10_11_20200101_120000',
+                     'FoilHole_2_Data_20_21_20200101_120100']
+            movies = []
+            for index, root in enumerate(roots):
+                movieFile = os.path.join(movieDir, root + '_Fractions.mrc')
+                xmlFile = os.path.join(xmlDir, root + '.xml')
+                open(movieFile, 'w').close()
+                open(xmlFile, 'w').close()
+                movies.append(_Movie(movieFile, 'movie_%03d' % index))
+
+            extension = ProtGenerateAfisGroups._stageInputFiles(
+                tmpDir, movies, inputDir)
+
+            self.assertEqual('mrc', extension)
+            self.assertEqual(
+                sorted([root + suffix for root in roots
+                        for suffix in ('.xml', '_Fractions.mrc')]),
+                sorted(os.listdir(inputDir)))
+            self.assertTrue(all(os.path.islink(os.path.join(inputDir, name))
+                                for name in os.listdir(inputDir)))
+
+    def testMatchingRequiresOneXmlPerMovie(self):
+        with tempfile.TemporaryDirectory() as tmpDir:
+            movie = _Movie(
+                os.path.join(tmpDir,
+                             'FoilHole_1_Data_10_11_20200101_120000_Fractions.mrc'),
+                'movie_001')
+            unrelatedXml = os.path.join(
+                tmpDir, 'FoilHole_2_Data_20_21_20200101_120100.xml')
+            open(unrelatedXml, 'w').close()
+            with self.assertRaisesRegex(ValueError,
+                                        'No EPU XML metadata file matches'):
+                ProtGenerateAfisGroups._matchMoviesAndXml(tmpDir, [movie])
+
     def testMtfWizardTargetsProtocolAndSetsSelectedPath(self):
         class Form:
             def setVar(self, name, value):
