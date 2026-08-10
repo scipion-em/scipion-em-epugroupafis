@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from emtable import Table
 from pyworkflow.object import Integer
@@ -23,6 +23,43 @@ class _Movie:
 
 
 class TestGenerateAfisGroups(unittest.TestCase):
+    def testRunPassesConfiguredThreadsAsWorkers(self):
+        protocol = ProtGenerateAfisGroups.__new__(ProtGenerateAfisGroups)
+        movies = MagicMock()
+        acquisition = movies.getAcquisition.return_value
+        movies.getSamplingRate.return_value = 1.0
+        acquisition.getVoltage.return_value = 300
+        acquisition.getSphericalAberration.return_value = 2.7
+        acquisition.getAmplitudeContrast.return_value = 0.1
+
+        protocol.inputMovies = MagicMock()
+        protocol.inputMovies.get.return_value = movies
+        protocol.xmlFilesInSameFolder = MagicMock()
+        protocol.xmlFilesInSameFolder.get.return_value = True
+        protocol.xmlDir = MagicMock()
+        protocol.xmlDir.get.return_value = '/xml'
+        protocol.numberOfGroups = MagicMock()
+        protocol.numberOfGroups.get.return_value = 5
+        protocol.algorithm = MagicMock()
+        protocol.algorithm.get.return_value = 0
+        protocol.numberOfThreads = MagicMock()
+        protocol.numberOfThreads.get.return_value = 6
+        protocol.mtfFile = MagicMock()
+        protocol.mtfFile.hasValue.return_value = False
+
+        with patch.object(protocol, '_useDirectInput',
+                          return_value=('/xml', '/movies', 'eer', 2, 0, 0)), \
+                patch.object(protocol, '_store'), \
+                patch.object(protocol, '_getExtraPath',
+                             return_value='/output/movies.star'), \
+                patch('epugroupafis.protocols.'
+                      'protocol_generate_afis_groups.Plugin.'
+                      'runEpugroupafis') as runAfis:
+            protocol.runAfisStep(None)
+
+        arguments = runAfis.call_args.args[1]
+        self.assertIn('--workers 6', arguments)
+
     def testDirectInputAvoidsStaging(self):
         with tempfile.TemporaryDirectory() as tmpDir:
             xmlDir = os.path.join(tmpDir, 'xml')
