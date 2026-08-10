@@ -3,7 +3,8 @@ import os
 import pwem
 from pyworkflow.utils import Environ
 
-from .constants import (EPUGROUPAFIS, EPUGROUPAFIS_DEFAULT_ACTIVATION_CMD,
+from .constants import (EPUGROUPAFIS, EPUGROUPAFIS_BRANCH,
+                        EPUGROUPAFIS_DEFAULT_ACTIVATION_CMD,
                         EPUGROUPAFIS_ENV_ACTIVATION, EPUGROUPAFIS_ENV_NAME,
                         EPUGROUPAFIS_HOME, EPUGROUPAFIS_PROGRAM,
                         EPUGROUPAFIS_REPOSITORY, EPUGROUPAFIS_VERSION)
@@ -36,7 +37,9 @@ class Plugin(pwem.Plugin):
         command += (' conda create -y -n %s -c conda-forge python=3.10 '
                     'numpy scikit-learn matplotlib && ' % EPUGROUPAFIS_ENV_NAME)
         command += 'conda activate %s && ' % EPUGROUPAFIS_ENV_NAME
-        command += 'git clone --depth 1 %s . && ' % EPUGROUPAFIS_REPOSITORY
+        command += ('git clone --depth 1 --branch %s '
+                % EPUGROUPAFIS_BRANCH)
+        command += '--single-branch %s . && ' % EPUGROUPAFIS_REPOSITORY
         command += ('install -m 755 EPU_Group_AFIS.py '
                     '"$CONDA_PREFIX/bin/%s" && ' % EPUGROUPAFIS_PROGRAM)
         command += 'touch %s' % installedFlag
