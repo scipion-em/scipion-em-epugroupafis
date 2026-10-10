@@ -34,7 +34,7 @@ class Plugin(pwem.Plugin):
     def defineBinaries(cls, env):
         installedFlag = '%s_installed' % EPUGROUPAFIS_ENV_NAME
         command = cls.getCondaActivationCmd()
-        command += (' conda create -y -n %s -c conda-forge python=3.10 '
+        command += (' conda create -y -n %s -c conda-forge python=3.14 '
                 'pip && ' % EPUGROUPAFIS_ENV_NAME)
         command += 'conda activate %s && ' % EPUGROUPAFIS_ENV_NAME
         command += ('git clone --depth 1 --branch %s '
